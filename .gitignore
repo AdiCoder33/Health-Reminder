@@ -137,3 +137,7 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+# Android/Gradle wrapper artifacts
+android/gradle/wrapper/gradle-wrapper.jar
+# Local-only reminder audio assets
+android/app/src/main/res/raw/tablet_time.wav
