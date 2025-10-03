@@ -2,6 +2,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:hive/hive.dart';
@@ -18,6 +19,27 @@ const String kTtsMessage = 'Please take your tablets now.';
 final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
 final FlutterTts _tts = FlutterTts();
 bool _speakOnLaunch = false;
+bool _androidCustomSoundAvailable = true;
+NotificationDetails _buildNotificationDetails() => NotificationDetails(
+      android: AndroidNotificationDetails(
+        kNotificationChannelId,
+        kNotificationChannelName,
+        channelDescription: kNotificationChannelDescription,
+        importance: Importance.max,
+        priority: Priority.high,
+        playSound: true,
+        sound: _androidCustomSoundAvailable ? const RawResourceAndroidNotificationSound('tablet_time') : null,
+        enableLights: true,
+        enableVibration: true,
+        icon: '@mipmap/ic_launcher',
+      ),
+      iOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        // For a bundled custom sound on iOS add: sound: 'tablet_time.wav'.
+      ),
+    );
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -97,18 +119,33 @@ Future<void> _initializeNotifications() async {
 
   final androidPlugin =
       _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-  await androidPlugin?.requestNotificationsPermission();
-  await androidPlugin?.createNotificationChannel(
-    const AndroidNotificationChannel(
-      kNotificationChannelId,
-      kNotificationChannelName,
-      description: kNotificationChannelDescription,
-      importance: Importance.max,
-      playSound: true,
-      sound: RawResourceAndroidNotificationSound('tablet_time'),
-      audioAttributesUsage: AudioAttributesUsage.alarm,
-    ),
-  );
+  if (androidPlugin != null) {
+    await androidPlugin.requestNotificationsPermission();
+    try {
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          kNotificationChannelId,
+          kNotificationChannelName,
+          description: kNotificationChannelDescription,
+          importance: Importance.max,
+          playSound: true,
+          sound: RawResourceAndroidNotificationSound('tablet_time'),
+          audioAttributesUsage: AudioAttributesUsage.alarm,
+        ),
+      );
+    } on PlatformException {
+      _androidCustomSoundAvailable = false;
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          kNotificationChannelId,
+          kNotificationChannelName,
+          description: kNotificationChannelDescription,
+          importance: Importance.max,
+          playSound: true,
+        ),
+      );
+    }
+  }
 
   final iosPlugin =
       _notifications.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
@@ -128,33 +165,23 @@ Future<void> _triggerReminderSpeech() async {
 
 
 Future<void> previewReminderSound() async {
-  await _notifications.show(
-    9990000,
-    'Tablet Reminder',
-    'This is how the reminder alarm will sound.',
-    NotificationDetails(
-      android: AndroidNotificationDetails(
-        kNotificationChannelId,
-        kNotificationChannelName,
-        channelDescription: kNotificationChannelDescription,
-        importance: Importance.max,
-        priority: Priority.high,
-        playSound: true,
-        sound: const RawResourceAndroidNotificationSound('tablet_time'),
-        enableLights: true,
-        enableVibration: true,
-        icon: '@mipmap/ic_launcher',
-      ),
-      iOS: const DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-        // For a bundled custom sound on iOS add: sound: 'tablet_time.wav'.
-      ),
-    ),
-  );
+  try {
+    await _notifications.show(
+      9990000,
+      'Tablet Reminder',
+      'This is how the reminder alarm will sound.',
+      _buildNotificationDetails(),
+    );
+  } on PlatformException {
+    _androidCustomSoundAvailable = false;
+    await _notifications.show(
+      9990000,
+      'Tablet Reminder',
+      'This is how the reminder alarm will sound.',
+      _buildNotificationDetails(),
+    );
+  }
 }
-
 
 Future<void> scheduleAll() async {
   final box = Hive.box<Dose>(kDoseBoxName);
@@ -174,36 +201,33 @@ Future<void> scheduleAll() async {
       final dayLabel = _weekdayLabels[weekday] ?? 'Day';
       final body = '${dose.dosage} - $dayLabel at ${_formatTime(dose.hour, dose.minute)}';
 
-      await _notifications.zonedSchedule(
-        notificationId,
-        dose.name,
-        body,
-        scheduled,
-        NotificationDetails(
-          android: AndroidNotificationDetails(
-            kNotificationChannelId,
-            kNotificationChannelName,
-            channelDescription: kNotificationChannelDescription,
-            importance: Importance.max,
-            priority: Priority.high,
-            playSound: true,
-            sound: const RawResourceAndroidNotificationSound('tablet_time'),
-            enableLights: true,
-            enableVibration: true,
-            icon: '@mipmap/ic_launcher',
-          ),
-          iOS: const DarwinNotificationDetails(
-            presentAlert: true,
-            presentBadge: true,
-            presentSound: true,
-            // For a bundled custom sound on iOS add: sound: 'tablet_time.wav'.
-          ),
-        ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-        matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
-        payload: doseKey.toString(),
-      );
+      final details = _buildNotificationDetails();
+      try {
+        await _notifications.zonedSchedule(
+          notificationId,
+          dose.name,
+          body,
+          scheduled,
+          details,
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+          payload: doseKey.toString(),
+        );
+      } on PlatformException {
+        _androidCustomSoundAvailable = false;
+        await _notifications.zonedSchedule(
+          notificationId,
+          dose.name,
+          body,
+          scheduled,
+          _buildNotificationDetails(),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+          payload: doseKey.toString(),
+        );
+      }
     }
   }
 }
@@ -724,9 +748,3 @@ README
 - Run: flutter pub get && flutter run
 - Note for Android 12+: exact alarms require manual toggle in App Info.
 */
-
-
-
-
-
-
