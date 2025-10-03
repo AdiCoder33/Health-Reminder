@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Health Reminder</string>
-    <string name="notification_sound_placeholder">Provide tablet_time.wav in res/raw or update this value locally.</string>
-</resources>
