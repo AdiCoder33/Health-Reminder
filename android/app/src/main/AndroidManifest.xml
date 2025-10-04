@@ -1,7 +1,8 @@
-﻿<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Optional but recommended: allows exact alarms for timely reminders on Android 12+. Users may need to enable it manually. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:label="Tablet Reminder"
@@ -40,3 +41,4 @@
         </intent>
     </queries>
 </manifest>
+

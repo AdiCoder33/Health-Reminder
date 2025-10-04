@@ -1,11 +1,10 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
@@ -20,13 +19,16 @@ final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotifications
 final FlutterTts _tts = FlutterTts();
 bool _speakOnLaunch = false;
 bool _androidCustomSoundAvailable = true;
+bool _androidExactAlarmAllowed = true;
 NotificationDetails _buildNotificationDetails() => NotificationDetails(
       android: AndroidNotificationDetails(
         kNotificationChannelId,
         kNotificationChannelName,
         channelDescription: kNotificationChannelDescription,
+        category: AndroidNotificationCategory.alarm,
         importance: Importance.max,
         priority: Priority.high,
+        fullScreenIntent: true,
         playSound: true,
         sound: _androidCustomSoundAvailable ? const RawResourceAndroidNotificationSound('tablet_time') : null,
         enableLights: true,
@@ -40,6 +42,28 @@ NotificationDetails _buildNotificationDetails() => NotificationDetails(
         // For a bundled custom sound on iOS add: sound: 'tablet_time.wav'.
       ),
     );
+
+Future<void> _ensureAndroidExactAlarmCapability(AndroidFlutterLocalNotificationsPlugin plugin) async {
+  if (!Platform.isAndroid) {
+    return;
+  }
+  try {
+    final canScheduleExact = await plugin.canScheduleExactNotifications();
+    if (canScheduleExact == false) {
+      final granted = await plugin.requestExactAlarmsPermission();
+      _androidExactAlarmAllowed = granted ?? false;
+    } else {
+      _androidExactAlarmAllowed = true;
+    }
+  } on PlatformException catch (e) {
+    debugPrint('Exact alarm capability check failed: ${e.code}');
+  } catch (e) {
+    debugPrint('Exact alarm capability check failed: $e');
+  }
+  if (!_androidExactAlarmAllowed) {
+    debugPrint('Exact alarm permission not granted. Reminders will use inexact scheduling. Enable "Alarms and reminders" for Tablet Reminder in system Settings for precise alarms.');
+  }
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -121,6 +145,7 @@ Future<void> _initializeNotifications() async {
       _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
   if (androidPlugin != null) {
     await androidPlugin.requestNotificationsPermission();
+
     try {
       await androidPlugin.createNotificationChannel(
         const AndroidNotificationChannel(
@@ -162,7 +187,6 @@ Future<void> _triggerReminderSpeech() async {
   } catch (_) {}
   await _tts.speak(kTtsMessage);
 }
-
 
 Future<void> previewReminderSound() async {
   try {
@@ -209,24 +233,44 @@ Future<void> scheduleAll() async {
           body,
           scheduled,
           details,
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          androidScheduleMode: _androidExactAlarmAllowed
+              ? AndroidScheduleMode.exactAllowWhileIdle
+              : AndroidScheduleMode.inexactAllowWhileIdle,
           uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
           matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
           payload: doseKey.toString(),
         );
-      } on PlatformException {
-        _androidCustomSoundAvailable = false;
-        await _notifications.zonedSchedule(
-          notificationId,
-          dose.name,
-          body,
-          scheduled,
-          _buildNotificationDetails(),
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-          matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
-          payload: doseKey.toString(),
-        );
+      } on PlatformException catch (e) {
+        if (e.code == 'exact_alarms_not_permitted') {
+          _androidExactAlarmAllowed = false;
+          debugPrint('Exact alarms not permitted. Using inexact scheduling. Enable "Alarms and reminders" permission for precise reminders.');
+          await _notifications.zonedSchedule(
+            notificationId,
+            dose.name,
+            body,
+            scheduled,
+            _buildNotificationDetails(),
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+            matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+            payload: doseKey.toString(),
+          );
+        } else {
+          _androidCustomSoundAvailable = false;
+          await _notifications.zonedSchedule(
+            notificationId,
+            dose.name,
+            body,
+            scheduled,
+            _buildNotificationDetails(),
+            androidScheduleMode: _androidExactAlarmAllowed
+                ? AndroidScheduleMode.exactAllowWhileIdle
+                : AndroidScheduleMode.inexactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+            matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+            payload: doseKey.toString(),
+          );
+        }
       }
     }
   }
@@ -311,6 +355,20 @@ class _TabletReminderAppState extends State<TabletReminderApp> with WidgetsBindi
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final androidPlugin =
+          _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      if (androidPlugin != null) {
+        await _ensureAndroidExactAlarmCapability(androidPlugin);
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final androidPlugin =
+          _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      if (androidPlugin != null) {
+    
+      }
+    });
     if (_speakOnLaunch) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         _speakOnLaunch = false;
@@ -606,8 +664,6 @@ class _DoseFormPageState extends State<DoseFormPage> {
       ),
     );
   }
-
-
 
   Future<void> _pickTime() async {
     final picked = await showTimePicker(context: context, initialTime: _selectedTime);
