@@ -65,6 +65,17 @@ Future<void> _ensureAndroidExactAlarmCapability(AndroidFlutterLocalNotifications
   }
 }
 
+Future<void> _refreshAndroidExactAlarmStatus() async {
+  if (!Platform.isAndroid) {
+    return;
+  }
+  final androidPlugin =
+      _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+  if (androidPlugin != null) {
+    await _ensureAndroidExactAlarmCapability(androidPlugin);
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -208,8 +219,12 @@ Future<void> previewReminderSound() async {
 }
 
 Future<void> scheduleAll() async {
+  await _refreshAndroidExactAlarmStatus();
   final box = Hive.box<Dose>(kDoseBoxName);
   await _notifications.cancelAll();
+
+  final androidPlugin =
+      _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
 
   for (final entry in box.toMap().entries) {
     final int doseKey = entry.key as int;
@@ -243,6 +258,7 @@ Future<void> scheduleAll() async {
       } on PlatformException catch (e) {
         if (e.code == 'exact_alarms_not_permitted') {
           _androidExactAlarmAllowed = false;
+          await androidPlugin?.requestExactAlarmsPermission();
           debugPrint('Exact alarms not permitted. Using inexact scheduling. Enable "Alarms and reminders" permission for precise reminders.');
           await _notifications.zonedSchedule(
             notificationId,
@@ -356,18 +372,7 @@ class _TabletReminderAppState extends State<TabletReminderApp> with WidgetsBindi
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final androidPlugin =
-          _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      if (androidPlugin != null) {
-        await _ensureAndroidExactAlarmCapability(androidPlugin);
-      }
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final androidPlugin =
-          _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      if (androidPlugin != null) {
-    
-      }
+      await _refreshAndroidExactAlarmStatus();
     });
     if (_speakOnLaunch) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -386,6 +391,7 @@ class _TabletReminderAppState extends State<TabletReminderApp> with WidgetsBindi
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _refreshAndroidExactAlarmStatus();
       scheduleAll();
     }
   }
