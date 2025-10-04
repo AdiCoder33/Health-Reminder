@@ -43,6 +43,11 @@ NotificationDetails _buildNotificationDetails() => NotificationDetails(
       ),
     );
 
+Future<void> _logPendingNotifications(String label) async {
+  final pending = await _notifications.pendingNotificationRequests();
+  debugPrint('[alarms] $label pending: ${pending.map((e) => e.id).join(', ')}');
+}
+
 Future<void> _ensureAndroidExactAlarmCapability(AndroidFlutterLocalNotificationsPlugin plugin) async {
   if (!Platform.isAndroid) {
     return;
@@ -52,9 +57,11 @@ Future<void> _ensureAndroidExactAlarmCapability(AndroidFlutterLocalNotifications
     if (canScheduleExact == false) {
       final granted = await plugin.requestExactAlarmsPermission();
       _androidExactAlarmAllowed = granted ?? false;
+      debugPrint('[alarms] requestExactAlarmsPermission -> ${_androidExactAlarmAllowed ? 'true' : 'false'}');
     } else {
       _androidExactAlarmAllowed = true;
     }
+    debugPrint('[alarms] canScheduleExact=${canScheduleExact?.toString() ?? 'null'} allowed=$_androidExactAlarmAllowed');
   } on PlatformException catch (e) {
     debugPrint('Exact alarm capability check failed: ${e.code}');
   } catch (e) {
@@ -223,6 +230,8 @@ Future<void> scheduleAll() async {
   final box = Hive.box<Dose>(kDoseBoxName);
   await _notifications.cancelAll();
 
+  await _logPendingNotifications('before scheduleAll');
+
   final androidPlugin =
       _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
 
@@ -241,6 +250,7 @@ Future<void> scheduleAll() async {
       final body = '${dose.dosage} - $dayLabel at ${_formatTime(dose.hour, dose.minute)}';
 
       final details = _buildNotificationDetails();
+      debugPrint('[alarms] scheduling id=$notificationId time=$scheduled exactAllowed=$_androidExactAlarmAllowed');
       try {
         await _notifications.zonedSchedule(
           notificationId,
@@ -273,6 +283,7 @@ Future<void> scheduleAll() async {
           );
         } else {
           _androidCustomSoundAvailable = false;
+          debugPrint('[alarms] other failure for id=$notificationId: ${e.code}');
           await _notifications.zonedSchedule(
             notificationId,
             dose.name,
@@ -290,6 +301,7 @@ Future<void> scheduleAll() async {
       }
     }
   }
+  await _logPendingNotifications('after scheduleAll');
 }
 
 tz.TZDateTime _nextInstanceOfWeekday(int weekday, int hour, int minute) {
@@ -373,6 +385,7 @@ class _TabletReminderAppState extends State<TabletReminderApp> with WidgetsBindi
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _refreshAndroidExactAlarmStatus();
+      await _logPendingNotifications('init');
     });
     if (_speakOnLaunch) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -393,6 +406,7 @@ class _TabletReminderAppState extends State<TabletReminderApp> with WidgetsBindi
     if (state == AppLifecycleState.resumed) {
       _refreshAndroidExactAlarmStatus();
       scheduleAll();
+      _logPendingNotifications('resumed');
     }
   }
 
